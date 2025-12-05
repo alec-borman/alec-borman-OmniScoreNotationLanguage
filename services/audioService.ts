@@ -2,8 +2,8 @@ import * as Tone from 'tone';
 import { InstrumentDefinition, INSTRUMENTS, NoteEvent } from '../types';
 
 export class AudioService {
-  private sampler: Tone.Sampler | null = null;
-  private currentInstrumentId: string = '';
+  // Registry to hold multiple loaded samplers
+  private samplers: Map<string, Tone.Sampler> = new Map();
   private reverb: Tone.Reverb;
   private limiter: Tone.Limiter;
 
@@ -22,15 +22,9 @@ export class AudioService {
     }
   }
 
-  /**
-   * Generates a map of notes to file names for the sampler.
-   * We skip notes to save bandwidth, letting Tone.js repitch samples.
-   * Mapping Pattern: C, D#, F#, A (Diminished chord steps)
-   */
   private getSampleMap(source: 'salamander' | 'fluid', instrumentId: string): Record<string, string> {
     const notes = ['C', 'D#', 'F#', 'A'];
-    // Salamander (Piano) has full range. Fluid varies, so we stick to a safe middle range for Fluid to avoid 404s.
-    // Tone.js will automatically pitch shift samples for notes outside this range.
+    // Optimization: limit range for Fluid to avoid 404s on extremes
     const octaves = source === 'salamander' ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [1, 2, 3, 4, 5, 6, 7];
     
     const urlMap: Record<string, string> = {};
@@ -38,29 +32,22 @@ export class AudioService {
     octaves.forEach(octave => {
       notes.forEach(note => {
         const midiNote = `${note}${octave}`;
-        
-        // Refine edge cases
         if (source === 'salamander') {
-             // Salamander is Piano A0 - C8
-             if (octave === 0 && (note === 'C' || note === 'D#' || note === 'F#')) return; // A0 starts later
-             if (octave === 8 && note !== 'C') return; // Ends at C8
+             if (octave === 0 && (note === 'C' || note === 'D#' || note === 'F#')) return;
+             if (octave === 8 && note !== 'C') return;
         }
 
         let fileName = midiNote;
         if (source === 'fluid') {
-             // FluidR3 repo typically uses 'Ab3.mp3' style. 
-             // Convert Sharp to Flat: D# -> Eb, F# -> Gb, A# -> Bb
-             // BUT, C# -> Db.
+             // Fluid map: D#->Eb, etc.
              const replacement = midiNote
                 .replace('C#', 'Db')
                 .replace('D#', 'Eb')
                 .replace('F#', 'Gb')
                 .replace('G#', 'Ab')
                 .replace('A#', 'Bb');
-             
              fileName = replacement;
         } else {
-             // Salamander (Tonejs) uses 'A0.mp3', 'C1.mp3', 'Ds1.mp3'
              fileName = midiNote.replace('#', 's');
         }
 
@@ -75,84 +62,137 @@ export class AudioService {
     if (instrument.source === 'salamander') {
       return 'https://tonejs.github.io/audio/salamander/';
     }
-    // Using raw.githubusercontent to avoid potential CORS issues with gh-pages or other gateways
     return `https://raw.githubusercontent.com/gleitz/midi-js-soundfonts/gh-pages/FluidR3_GM/${instrument.id}-mp3/`;
   }
 
-  public async loadInstrument(instrumentId: string): Promise<void> {
-    if (this.currentInstrumentId === instrumentId && this.sampler?.loaded) {
-      return;
-    }
+  /**
+   * Smartly maps a score instrument name (e.g. "Flauti") to a soundfont ID (e.g. "flute")
+   */
+  private mapNameToSoundfontId(name: string): string {
+    const n = name.toLowerCase();
+    
+    // Heuristic Matching
+    if (n.includes('piano')) return 'grand_piano';
+    if (n.includes('flaut') || n.includes('flute')) return 'flute';
+    if (n.includes('oboi') || n.includes('oboe')) return 'oboe';
+    if (n.includes('clarinet') || n.includes('clarinetti')) return 'clarinet';
+    if (n.includes('fagot') || n.includes('bassoon')) return 'bassoon';
+    if (n.includes('corni') || n.includes('horn')) return 'french_horn';
+    if (n.includes('trombe') || n.includes('trumpet')) return 'trumpet';
+    if (n.includes('trombon')) return 'trombone';
+    if (n.includes('tuba')) return 'tuba';
+    if (n.includes('violin')) return 'violin';
+    if (n.includes('viola')) return 'viola';
+    if (n.includes('violoncell') || n.includes('cello')) return 'cello';
+    if (n.includes('basso') || n.includes('contrabass')) return 'contrabass';
+    if (n.includes('timp')) return 'timpani';
+    if (n.includes('harp')) return 'orchestral_harp';
+    if (n.includes('guitar')) return 'acoustic_guitar_nylon';
+    
+    // Fallback based on ID if name fails
+    return 'grand_piano'; 
+  }
 
-    const instrumentDef = INSTRUMENTS.find(i => i.id === instrumentId);
-    if (!instrumentDef) throw new Error(`Instrument ${instrumentId} not found`);
+  /**
+   * Loads a specific soundfont into the registry if not present
+   */
+  public async loadSoundfont(soundfontId: string): Promise<void> {
+    if (this.samplers.has(soundfontId)) return; // Already loaded
 
-    if (this.sampler) {
-      this.sampler.releaseAll();
-      this.sampler.dispose();
-    }
-
+    const instrumentDef = INSTRUMENTS.find(i => i.id === soundfontId) || INSTRUMENTS[0];
     const baseUrl = this.getBaseUrl(instrumentDef);
     const urls = this.getSampleMap(instrumentDef.source, instrumentDef.id);
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       let resolved = false;
-
-      // Timeout fallback: if loading takes too long (e.g. 10s), assume it failed or let it play with what it has
       const timeoutId = setTimeout(() => {
           if (!resolved) {
-              console.warn(`Timeout loading instrument ${instrumentId}. Resolving anyway.`);
+              console.warn(`Timeout loading ${soundfontId}.`);
               resolved = true;
-              // We don't reject because some samples might have loaded.
-              // We mark as current so we don't retry in a loop.
-              this.currentInstrumentId = instrumentId;
               resolve(); 
           }
-      }, 10000);
+      }, 8000); // 8s timeout
 
-      this.sampler = new Tone.Sampler({
+      const sampler = new Tone.Sampler({
         urls,
         baseUrl,
         onload: () => {
           if (!resolved) {
               clearTimeout(timeoutId);
               resolved = true;
-              this.currentInstrumentId = instrumentId;
               resolve();
           }
         },
-        onerror: (err) => {
-          // One single file error triggers this, but we might want to continue.
-          console.warn("Sampler error (missing file?):", err);
-          // Don't reject immediately, maybe other files load.
-          // If all fail, timeout will handle it.
+        onerror: (e) => {
+            console.warn(`Error loading ${soundfontId}`, e);
+            // Resolve anyway to prevent blocking
+            if (!resolved) {
+                clearTimeout(timeoutId);
+                resolved = true;
+                resolve();
+            }
         }
       }).connect(this.reverb);
+
+      this.samplers.set(soundfontId, sampler);
     });
+  }
+
+  /**
+   * Prepares playback by analyzing events and loading necessary instruments
+   */
+  public async preparePlayback(events: NoteEvent[]): Promise<void> {
+    // 1. Identify unique instruments needed
+    const requiredSoundfonts = new Set<string>();
+
+    events.forEach(ev => {
+        // Use name if available ("Flauti"), else id ("fl")
+        const nameToMap = ev.instrumentName || ev.hand || 'piano';
+        const soundfontId = this.mapNameToSoundfontId(nameToMap);
+        requiredSoundfonts.add(soundfontId);
+        
+        // Tag the event with the resolved soundfont ID for playback later
+        (ev as any)._soundfontId = soundfontId;
+    });
+
+    // 2. Load missing ones
+    const promises: Promise<void>[] = [];
+    requiredSoundfonts.forEach(sfId => {
+        if (!this.samplers.has(sfId)) {
+            promises.push(this.loadSoundfont(sfId));
+        }
+    });
+
+    if (promises.length > 0) {
+        await Promise.all(promises);
+    }
   }
 
   public play(events: NoteEvent[], onStopCallback: () => void) {
     this.stop(); 
 
-    if (!this.sampler || !this.sampler.loaded) {
-        console.warn("Sampler not loaded");
-        // Try to play anyway? No, silent.
-        // But if timeout forced resolution, 'loaded' property might be true (Tone.js internal).
+    if (events.length === 0) {
+        onStopCallback();
+        return;
     }
 
     // Schedule Notes
     events.forEach(event => {
-      Tone.Transport.schedule((time) => {
-        this.sampler?.triggerAttackRelease(event.note, event.duration, time);
-      }, event.time);
+      const sfId = (event as any)._soundfontId || 'grand_piano';
+      const sampler = this.samplers.get(sfId);
 
-      // Visuals
+      if (sampler && sampler.loaded) {
+          Tone.Transport.schedule((time) => {
+            sampler.triggerAttackRelease(event.note, event.duration, time);
+          }, event.time);
+      }
+
+      // Visuals (keep existing logic)
       const cleanNote = event.note.replace('#', 's').toLowerCase();
       const elementId = `key-${cleanNote}`;
       const isBlack = event.note.includes('#');
       const activeClass = isBlack ? 'active-black' : 'active-white';
 
-      // ON
       Tone.Transport.schedule((time) => {
         Tone.Draw.schedule(() => {
           const el = document.getElementById(elementId);
@@ -160,7 +200,6 @@ export class AudioService {
         }, time);
       }, event.time);
 
-      // OFF
       Tone.Transport.schedule((time) => {
         Tone.Draw.schedule(() => {
           const el = document.getElementById(elementId);
@@ -183,7 +222,8 @@ export class AudioService {
   public stop() {
     Tone.Transport.stop();
     Tone.Transport.cancel(0);
-    this.sampler?.releaseAll();
+    // Do NOT dispose samplers here, we keep them in cache
+    this.samplers.forEach(s => s.releaseAll());
     
     document.querySelectorAll('.active-white, .active-black').forEach(el => {
         el.classList.remove('active-white', 'active-black');

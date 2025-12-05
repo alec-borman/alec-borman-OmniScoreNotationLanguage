@@ -15,27 +15,21 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Initial load of the default instrument.
-    // NOTE: We do NOT call audioService.start() here because that requires a user gesture.
-    // We just load the buffers.
-    loadInstrument(INSTRUMENTS[0].id, false);
-    
+    // Initial load: we can just load the default piano to have something ready
+    // But the new logic handles loading on play.
     return () => {
         audioService.stop();
     };
   }, []);
 
+  // Updated: this manually loads a specific instrument if selected from dropdown
+  // BUT: The dropdown now acts more like a "Preview" or "Default" selector if the score uses generic names.
   const loadInstrument = async (id: string, startContext = true) => {
       try {
           setIsLoading(true);
           setInstrumentId(id);
-          
-          if (startContext) {
-             // Only start context if triggered by user (e.g. play button or dropdown change)
-             await audioService.start(); 
-          }
-          
-          await audioService.loadInstrument(id);
+          if (startContext) await audioService.start();
+          await audioService.loadSoundfont(id); // Using new method
           setIsLoading(false);
       } catch (e: any) {
           console.error(e);
@@ -47,7 +41,6 @@ const App: React.FC = () => {
   const handlePlay = async () => {
     try {
         setError(null);
-        // Always ensure context is started on Play click
         await audioService.start();
         
         const events = ParserService.parse(score);
@@ -56,6 +49,12 @@ const App: React.FC = () => {
             return;
         }
 
+        // AUTO-LOAD ORCHESTRA
+        // Instead of playing immediately, we ask AudioService to prepare (load) needed instruments
+        setIsLoading(true);
+        await audioService.preparePlayback(events);
+        setIsLoading(false);
+
         setIsPlaying(true);
         audioService.play(events, () => {
             setIsPlaying(false);
@@ -63,6 +62,7 @@ const App: React.FC = () => {
 
     } catch (e: any) {
         setError(e.message || "An error occurred during playback.");
+        setIsLoading(false);
         setIsPlaying(false);
     }
   };
@@ -74,8 +74,6 @@ const App: React.FC = () => {
 
   const handleInstrumentChange = (id: string) => {
     if (isPlaying) return;
-    // Changing instrument is a user gesture, so we can try starting context, 
-    // although simply loading buffers doesn't strictly require it.
     loadInstrument(id, true);
   };
 
