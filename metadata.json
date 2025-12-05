@@ -1,0 +1,5 @@
+{
+  "name": "OmniScore Maestro",
+  "description": "A full 88-key piano visualizer and editor for OmniScore music files, featuring multiple synthesizer instruments and real-time playback.",
+  "requestFramePermissions": []
+}
