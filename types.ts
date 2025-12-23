@@ -13,7 +13,8 @@ export interface InstrumentDefinition {
 }
 
 export const INSTRUMENTS: InstrumentDefinition[] = [
-  { name: 'Grand Piano', id: 'grand_piano', source: 'salamander' },
+  // Switched to Fluid for performance/reliability in web context
+  { name: 'Grand Piano', id: 'acoustic_grand_piano', source: 'fluid' }, 
   // Strings
   { name: 'Violin', id: 'violin', source: 'fluid' },
   { name: 'Viola', id: 'viola', source: 'fluid' },
