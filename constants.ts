@@ -1,99 +1,48 @@
-export const INITIAL_SCORE = `
-omniscore
-  meta {
-    title: "Symphony No. 9 in D Minor, Op. 125"
-    movement: "IV. Presto"
-    composer: "Ludwig van Beethoven"
-    tempo: 288 %% Presto (d. = 96) -> 96 * 3 = 288 BPM (Quarter note)
-    key: "Dm"
-    time: 3/4
-  }
+export const INITIAL_SCORE = `@ "Finlandia" 72 4/4 Ab
 
-  %% === INSTRUMENT DEFINITIONS ===
-  
-  group "Woodwinds" symbol=bracket {
-    def fl    "Flauti"          style=standard
-    def ob    "Oboi"            style=standard
-    def cl    "Clarinetti in B" style=standard transpose=-2  %% Sounds Major 2nd lower (Bb)
-    def fag   "Fagotti"         style=standard clef=bass
-    def cfg   "Contrafagotto"   style=standard clef=bass transpose=-12 %% Sounds 8vb
-  }
+%% 1. ORCHESTRAL SCHEMATIC
+d Br st b  %% Heavy Brass (Trb, Tba, Hn)
+d Ww st t  %% Woodwinds (Fl, Ob, Cl)
+d St st t  %% Strings (Vln, Vla, Vc, Db)
+d Tp gr gm %% Timpani & Percussion
 
-  group "Brass" symbol=bracket {
-    def corD  "Corni in D"      style=standard transpose=+2  %% Sounds Major 2nd higher
-    def corB  "Corni in B"      style=standard transpose=-2  %% Sounds Major 2nd lower (Bb Basso)
-    def tpt   "Trombe in D"     style=standard transpose=+2  %% Sounds Major 2nd higher
-  }
+%% 2. THEMATIC DNA (SHARDS)
+$BrassDark = { [Ab1 C2 Eb2]:1.ff.ten [Gb1 Bb1 Db2]:2.sfz [F1 Ab1 C2]:2 }
+$StrAgit   = { !16 [Ab3 C4] [Ab3 C4] [Ab3 C4] [Ab3 C4] [Gb3 Bb3] [Gb3 Bb3] [Gb3 Bb3] [Gb3 Bb3] }
+$Hymn      = { !4 f4:2 g8. f16 | e4. f8 g4 | c4. f8 e d | c2. }
+$Victory   = { [Ab4 C5 Eb5]:8. [Ab4 C5 Eb5]:16 [Ab4 C5 Eb5]:4 }
 
-  def timp "Timpani in D.A." style=standard clef=bass
+%% 3. THE "ANDANTE SOSTENUTO" (Measures 1-12: The Gloom)
+m 1-12
+  Br: $BrassDark $BrassDark+5.dim r:2 [Eb2 G2 Bb2]:2 |
+  Tp: Ab1:1.roll.ff.decresc |
+  St: r:1 r:1 r:1 r:1 [Ab2 Eb3]:1.p.cresc |
 
-  group "Strings" symbol=brace {
-    def vln1  "Violino I"       style=standard
-    def vln2  "Violino II"      style=standard
-    def vla   "Viola"           style=standard clef=alto
-    def vc    "Violoncello"     style=standard clef=bass
-    def cb    "e Basso"         style=standard clef=bass transpose=-12 %% Sounds 8vb
-  }
+%% 4. THE "ALLEGRO MODERATO" (Measures 13-24: The Struggle)
+@ tempo:136
+m 13-24
+  St: !16 $StrAgit { [Gb3 Bb3] } x 4 { [F3 Ab3] } x 4 |
+  Br: !4 r:1 [Eb2]:4.stacc [Eb2]:4 [Eb2]:4 |
+  Ww: !16 r:4 [c5] [c5] [c5] [c5] [eb5] [eb5] [eb5] [eb5] |
 
-  %% === MUSIC DATA ===
+%% 5. THE "FINLANDIA HYMN" (Measures 70-85)
+@ tempo:80 4/4
+m 70-85
+  St: $Hymn |
+  Ww: $Hymn |
+  Br: [Ab1 Eb2 Ab2]:2.p [Db2 Ab2 Db3]:2 |
 
-  %% MEASURE 1-7: The "Schreckensfanfare"
-  measure 1..7
-    instruction "Presto (d. = 96)"
-    
-    %% Woodwinds: Rapid alternating 16th notes
-    fl:   { bf5:16 a5 } x 18 | 
-    ob:   { bf5:16 a5 } x 18 |
-    
-    %% Clarinets (Written C6/B5 -> Sounds Bb5/A5 due to transpose=-2)
-    cl:   { c6:16  b5 } x 18 | 
-    
-    %% Bassoons
-    fag:  { bf2:16 a2 } x 18 |
-    cfg:  { bf2:16 a2 } x 18 |
+%% 6. THE "ALLEGRO" FINALE
+@ tempo:144
+m 111-120
+  St: !16 $StrAgit.ffff |
+  Br: $Victory $Victory $Victory |
+  Tp: Ab1:1.roll.ffff |
 
-    %% Brass: Sustained Fortissimo
-    corD: g4:2. | %% Written G4 -> Sounds A4 (+2)
-    corB: c5:2. | %% Written C5 -> Sounds Bb4 (-2)
-    tpt:  g4:2. | %% Written G4 -> Sounds A4 (+2)
-
-    %% Percussion
-    timp: { d3 a2 }:2. |
-
-    %% Strings: Tremolo
-    vln1: d6:2. |
-    vln2: a5:2. |
-    vla:  f5:2. |
-    vc:   bf2:2. | 
-    cb:   bf2:2. |
-
-  %% MEASURE 8: General Pause
-  measure 8
-    instruction "G.P."
-    %% Special shorthand to broadcast rest to everyone
-    fl, ob, cl, fag, cfg, corD, corB, tpt, timp, vln1, vln2, vla, vc, cb: r:2. |
-
-  %% MEASURE 9: Recitative
-  measure 9
-    instruction "Recitativo"
-    %% All others rest
-    fl, ob, cl, fag, cfg, corD, corB, tpt, timp, vln1, vln2, vla: r:2. |
-    
-    %% Recitative Melody (Unison Vc/Cb)
-    vc: c#3:32 d3:2. | %% Grace note approx as 32nd
-    cb: c#3:32 d3:2. |
-
-  measure 10
-    vc: a3:4   bf3:4   c4:4 |
-    cb: a3:4   bf3:4   c4:4 |
-
-  measure 11
-    vc: c#4:4. d4:8    e4:4 |
-    cb: c#4:4. d4:8    e4:4 |
-
-  measure 12
-    vc: f4:4.  e4:8 d4:4 |
-    cb: f4:4.  e4:8 d4:4 |
+m 121
+  Br: [Ab1 Eb2 Ab2 C3]:1.ffff.accent |
+  Ww: [Ab4 C5 Eb5 Ab5]:1 |
+  St: [Ab3 C4 Eb4 Ab4]:1 |
 `;
 
 export const GENERATE_88_KEYS = () => {

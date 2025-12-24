@@ -1,4 +1,3 @@
-
 import { NoteEvent } from '../types';
 
 interface InstrumentState {
@@ -10,6 +9,7 @@ interface InstrumentState {
 interface StaffContext {
   lastDuration: string;
   lastOctave: number;
+  gridResolution: string | null;
 }
 
 export interface ScoreStructure {
@@ -29,17 +29,13 @@ export class ParserService {
   private static NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
   private static parsePitch(token: string, context: StaffContext): { note: string, octave: number } {
-    // Regex for: [Note][Accidental][Octave?]
-    // Accidentals: #, b, x, bb, n, qs, qf, tqs, tqf
     const match = token.match(/^([a-gA-G])(#|b|x|bb|n|qs|qf|tqs|tqf)?(-?\d+)?/i);
     if (!match) return { note: 'C', octave: context.lastOctave };
 
     let [_, name, acc, octStr] = match;
     name = name.toUpperCase();
     acc = acc || '';
-    
-    // Convert synonyms
-    if (acc === 'n') acc = ''; // Natural override
+    if (acc === 'n') acc = '';
     
     let octave = octStr ? parseInt(octStr, 10) : context.lastOctave;
     context.lastOctave = octave;
@@ -48,18 +44,18 @@ export class ParserService {
   }
 
   private static transpose(pitch: string, octave: number, semitones: number): string {
-    const noteIdx = this.NOTES.indexOf(pitch.replace('b', '#').replace('bb', '').replace('x', '')); 
-    // Simplified transposition for standard notes. 
-    // In a full implementation, we'd handle all OmniScore accidentals correctly.
     let baseIdx = this.NOTES.indexOf(pitch.toUpperCase());
     if (baseIdx === -1) {
-        // Handle flats
         if (pitch.endsWith('b')) {
             const step = pitch.substring(0, pitch.length-1).toUpperCase();
             baseIdx = (this.NOTES.indexOf(step) - 1 + 12) % 12;
             if (baseIdx === 11) octave--; 
+        } else if (pitch.endsWith('#')) {
+             const step = pitch.substring(0, pitch.length-1).toUpperCase();
+             baseIdx = (this.NOTES.indexOf(step) + 1) % 12;
+             if (baseIdx === 0) octave++;
         } else {
-            baseIdx = 0; // Fallback
+            baseIdx = 0;
         }
     }
 
@@ -79,8 +75,10 @@ export class ParserService {
     let globalBpm = 120;
     let globalTime = { num: 4, den: 4 };
 
-    // 1. Pre-process Macros
-    code = code.replace(/macro\s+(\w+)\s*=\s*\{([^\}]+)\}/gi, (_, name, body) => {
+    let processedCode = code.replace(/%%.*/g, '');
+    
+    // Macro extraction
+    processedCode = processedCode.replace(/(?:macro|\$)\s*(\w+)\s*[={]\s*([^\}]+)\}?/gi, (_, name, body) => {
       macros[name] = body.trim();
       return '';
     });
@@ -88,55 +86,53 @@ export class ParserService {
     const expandMacros = (text: string): string => {
       return text.replace(/\$(\w+)(?:\+?(-?\d+))?/g, (_, name, shift) => {
         let body = macros[name] || '';
-        if (shift) {
-            // Very basic transposition logic for macro contents
-            // In a real compiler, we would tokenize and shift each note
-        }
         return body;
       });
     };
 
-    const rawLines = code.split('\n');
+    const rawLines = processedCode.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    // 2. Metadata & Definitions
-    let activeGroup = { name: 'Ungrouped', instruments: [] as { id: string, name: string }[] };
+    let activeGroup = { name: 'Orchestra', instruments: [] as { id: string, name: string }[] };
+    
     rawLines.forEach(line => {
-      const cleanLine = line.replace(/%%.*/, '').trim();
-      if (!cleanLine) return;
-
-      const tempoMatch = cleanLine.match(/tempo:\s*(\d+)/);
-      if (tempoMatch) globalBpm = parseInt(tempoMatch[1], 10);
-
-      const timeMatch = cleanLine.match(/time:\s*(\d+)\/(\d+)/);
-      if (timeMatch) globalTime = { num: parseInt(timeMatch[1], 10), den: parseInt(timeMatch[2], 10) };
-
-      const gMatch = cleanLine.match(/group\s+"([^"]+)"/);
-      if (gMatch) {
-        if (activeGroup.instruments.length > 0) structure.groups.push(activeGroup);
-        activeGroup = { name: gMatch[1], instruments: [] };
+      if (line.startsWith('@')) {
+        const parts = line.split(/\s+/);
+        if (parts[2]) globalBpm = parseInt(parts[2], 10);
+        if (parts[3] && parts[3].includes('/')) {
+            const tParts = parts[3].split('/');
+            globalTime = { num: parseInt(tParts[0], 10), den: parseInt(tParts[1], 10) };
+        }
+        return;
       }
 
-      const dMatch = cleanLine.match(/def\s+(\w+)\s+(?:"([^"]+)"|([^\s]+))(?:\s+.*?)?(?:transpose=([+-]?\d+))?/);
+      const dMatch = line.match(/^d\s+(\w+)\s+(\w+)\s+(\w+)/i);
       if (dMatch) {
-        const id = dMatch[1], name = dMatch[2] || dMatch[3], transp = dMatch[4] ? parseInt(dMatch[4], 10) : 0;
-        instruments[id] = { id, name, transpose: transp };
-        staffContexts[id] = { lastDuration: '4', lastOctave: 4 };
-        activeGroup.instruments.push({ id, name });
+          const id = dMatch[1];
+          const nameMap: Record<string, string> = { 
+              'Br': 'Brass', 'Ww': 'Woodwinds', 'St': 'Strings', 'Tp': 'Timpani'
+          };
+          instruments[id] = { id, name: nameMap[id] || id, transpose: 0 };
+          staffContexts[id] = { lastDuration: '4', lastOctave: 4, gridResolution: null };
+          activeGroup.instruments.push({ id, name: instruments[id].name });
+          return;
       }
 
-      if (cleanLine === '}' && activeGroup.name !== 'Ungrouped') {
-        structure.groups.push(activeGroup);
-        activeGroup = { name: 'Ungrouped', instruments: [] };
+      const stdDMatch = line.match(/def\s+(\w+)\s+(?:"([^"]+)"|([^\s]+))(?:\s+.*?)?(?:transpose=([+-]?\d+))?/i);
+      if (stdDMatch) {
+        const id = stdDMatch[1], name = stdDMatch[2] || stdDMatch[3], transp = stdDMatch[4] ? parseInt(stdDMatch[4], 10) : 0;
+        instruments[id] = { id, name, transpose: transp };
+        staffContexts[id] = { lastDuration: '4', lastOctave: 4, gridResolution: null };
+        activeGroup.instruments.push({ id, name });
       }
     });
     if (activeGroup.instruments.length > 0) structure.groups.push(activeGroup);
 
-    // 3. Linearization of Measure Blocks
     let currentGlobalBeat = 0;
     let i = 0;
     while (i < rawLines.length) {
-      const line = rawLines[i].replace(/%%.*/, '').trim();
-      const mMatch = line.match(/^measure\s+(\d+)(?:\.\.(\d+))?/i);
+      const line = rawLines[i];
+      const mMatch = line.match(/^(?:measure|m)\s+(\d+)(?:[\.\-](\d+))?/i);
+      
       if (mMatch) {
         const startM = parseInt(mMatch[1], 10);
         const endM = mMatch[2] ? parseInt(mMatch[2], 10) : startM;
@@ -147,20 +143,18 @@ export class ParserService {
         let mBpm = globalBpm;
         let mTime = { ...globalTime };
 
-        while (i < rawLines.length && !rawLines[i].match(/^measure/i)) {
-          const bLine = rawLines[i].replace(/%%.*/, '').trim();
-          if (bLine.startsWith('meta')) {
-             const tMatch = bLine.match(/tempo:\s*(\d+)/);
+        while (i < rawLines.length && !rawLines[i].match(/^(?:measure|m)\s+\d+/i)) {
+          const bLine = rawLines[i];
+          if (bLine.startsWith('meta') || bLine.startsWith('@')) {
+             const tMatch = bLine.match(/tempo:\s*(\d+)/) || bLine.match(/@\s+tempo:(\d+)/);
              if (tMatch) mBpm = parseInt(tMatch[1], 10);
-             const tmMatch = bLine.match(/time:\s*(\d+)\/(\d+)/);
-             if (tmMatch) mTime = { num: parseInt(tmMatch[1], 10), den: parseInt(tmMatch[2], 10) };
           }
           blockLines.push(rawLines[i]);
           i++;
         }
 
         const beatSec = 60 / mBpm;
-        const measureDurBeats = (mTime.num * 4) / mTime.den;
+        const mDurBeats = (mTime.num * 4) / mTime.den;
 
         blockLines.forEach(bLine => {
           const assignMatch = bLine.match(/^([\w\s,]+):(.*)/);
@@ -169,42 +163,40 @@ export class ParserService {
           const ids = assignMatch[1].split(',').map(s => s.trim());
           let content = expandMacros(assignMatch[2].trim());
 
-          // Handle { ... } x N
-          content = content.replace(/\{([^\}]+)\}\s*x\s*(\d+)/gi, (_, body, count) => {
-             return Array(parseInt(count, 10)).fill(body).join(' ');
-          });
-
-          // Tokenize
-          const tokens: string[] = [];
-          let cur = "", inBrk = 0;
-          for (const char of content) {
-            if (char === '[') inBrk++; else if (char === ']') inBrk--;
-            if (char === ' ' && inBrk === 0) { if (cur) tokens.push(cur); cur = ""; }
-            else cur += char;
-          }
-          if (cur) tokens.push(cur);
+          content = content.replace(/\{([^\}]+)\}\s*[\*x]\s*(\d+)/gi, (_, body, count) => 
+            Array(parseInt(count, 10)).fill(body).join(' ')
+          );
 
           ids.forEach(id => {
-            const ctx = staffContexts[id] || { lastDuration: '4', lastOctave: 4 };
+            const ctx = staffContexts[id] || { lastDuration: '4', lastOctave: 4, gridResolution: null };
             const inst = instruments[id] || { id, name: id, transpose: 0 };
             let trackTime = currentGlobalBeat * beatSec;
             let measureOffset = 0;
 
+            const tokens = content.split(/\s+/).filter(t => t.length > 0);
+
             tokens.forEach(token => {
               if (token === '|') {
                 measureOffset++;
-                trackTime = (currentGlobalBeat + (measureOffset * measureDurBeats)) * beatSec;
+                trackTime = (currentGlobalBeat + (measureOffset * mDurBeats)) * beatSec;
                 return;
               }
 
-              let notePart = token, durStr = ctx.lastDuration;
+              if (token.startsWith('!')) {
+                ctx.gridResolution = token.substring(1);
+                ctx.lastDuration = ctx.gridResolution;
+                return;
+              }
+
+              let notePart = token, durStr = ctx.gridResolution || ctx.lastDuration;
+              
               if (token.includes(':')) {
                 const parts = token.split(':');
                 notePart = parts[0];
                 const dMatch = parts[1].match(/^([\d\.]+)/);
                 if (dMatch) {
                     durStr = dMatch[1];
-                    ctx.lastDuration = durStr;
+                    if (!ctx.gridResolution) ctx.lastDuration = durStr;
                 }
               }
 
@@ -218,6 +210,7 @@ export class ParserService {
                     : [notePart];
 
                 noteTokens.forEach(nt => {
+                    if (!nt) return;
                     const { note, octave } = this.parsePitch(clean(nt), ctx);
                     const transposed = this.transpose(note, octave, inst.transpose);
                     events.push({
@@ -235,8 +228,7 @@ export class ParserService {
           });
         });
 
-        // Fix: Changed measureDurationBeats to measureDurBeats to fix ReferenceError
-        currentGlobalBeat += (measureCount * measureDurBeats);
+        currentGlobalBeat += (measureCount * mDurBeats);
         continue;
       }
       i++;

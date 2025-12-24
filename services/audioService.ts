@@ -11,20 +11,20 @@ export class AudioService {
   private readonly DEFAULT_FALLBACK_ID = 'acoustic_grand_piano';
 
   constructor() {
-    this.masterGain = new Tone.Gain(1.2).toDestination();
+    this.masterGain = new Tone.Gain(1.5).toDestination();
     this.limiter = new Tone.Limiter(-1).connect(this.masterGain);
     
     this.compressor = new Tone.Compressor({
-        threshold: -18,
+        threshold: -15,
         ratio: 4,
         attack: 0.003,
         release: 0.2
     }).connect(this.limiter);
     
     this.reverb = new Tone.Reverb({
-      decay: 1.2,
-      preDelay: 0.04,
-      wet: 0.08
+      decay: 1.5,
+      preDelay: 0.05,
+      wet: 0.12
     }).connect(this.compressor);
   }
 
@@ -58,19 +58,25 @@ export class AudioService {
 
   private mapNameToSoundfontId(name: string): string {
     const n = name.toLowerCase();
-    if (n.includes('piano') || n.includes('rh') || n.includes('lh') || n.match(/^v\d+$/)) return 'acoustic_grand_piano';
-    if (n.includes('flaut') || n.includes('flute')) return 'flute';
-    if (n.includes('oboi') || n.includes('oboe')) return 'oboe';
-    if (n.includes('clarinet')) return 'clarinet';
-    if (n.includes('fagot') || n.includes('bassoon')) return 'bassoon';
-    if (n.includes('horn')) return 'french_horn';
-    if (n.includes('trumpet') || n.includes('trombe')) return 'trumpet';
-    if (n.includes('trombone')) return 'trombone';
-    if (n.includes('violin') || n.includes('vln')) return 'violin';
-    if (n.includes('cello') || n.includes('vc')) return 'cello';
+    // Orchestral Groups
+    if (n.includes('brass') || n.includes('horn') || n.includes('tromba') || n.includes('trombe')) return 'trombone';
+    if (n.includes('woodwind') || n.includes('flute') || n.includes('flauti') || n.includes('ww')) return 'flute';
+    if (n.includes('string') || n.includes('st') || n.includes('violin') || n.includes('vln')) return 'tremolo_strings';
     if (n.includes('timp')) return 'timpani';
+    
+    // Solo Instruments
+    if (n.includes('piano') || n.includes('rh') || n.includes('lh') || n.match(/^v\d+$/)) return 'acoustic_grand_piano';
+    if (n.includes('oboe')) return 'oboe';
+    if (n.includes('clarinet')) return 'clarinet';
+    if (n.includes('bassoon')) return 'bassoon';
+    if (n.includes('trumpet')) return 'trumpet';
+    if (n.includes('french_horn')) return 'french_horn';
+    if (n.includes('trombone')) return 'trombone';
+    if (n.includes('tuba')) return 'tuba';
+    if (n.includes('cello') || n.includes('vc')) return 'cello';
     if (n.includes('bass') || n.includes('cb')) return 'contrabass';
     if (n.includes('viola') || n.includes('vla')) return 'viola';
+    
     return this.DEFAULT_FALLBACK_ID; 
   }
 
